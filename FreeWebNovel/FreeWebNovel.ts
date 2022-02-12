@@ -13,22 +13,34 @@ import {
     Source,
     SourceInfo,
     Tag,
-    RequestManager
+    RequestManager,
+    TagType,
+    SourceStateManager,
+    Section,
+    FormRow
 } from 'paperback-extensions-common'
 
-import { interceptResponse, spliterate } from "./FreeWebNovelResponseInterceptor";
+import { decodeHTMLEntity, interceptResponse, spliterate } from "./FreeWebNovelResponseInterceptor";
 
 const WEBSITE_URL = "https://freewebnovel.com"
 const REQUEST_RETRIES = 3
 const MAX_PAGE_WIDTH = 800
 const LINES_PER_PAGE = 60.0
-const COOKIES = [
-    createCookie({
-        name: '__cf_bm',
-        value: 'JcAPjpD1tisY0N7k4anIphgk1FTVnvd1l5yM1vI7QYM-1644554941-0-AVWF+kRou4qztN8aUJ0ncyVk6Y6JQem9xP3mYminTeyu6oWdVcbk+ylr+T4UcF9WuXb5EF2fspjRt/APo5jOIELUy+7pN4UzKPeCxKjDVUKGF1943OSYZpx3VIVrbJJfcQ==',
-        domain: '.freewebnovel.com'
-    })
-]
+const SETTINGS: any = {
+    textColor: ["White", "Light Gray", "Brown", "Dark Gray", "Black"],
+    backgroundColor: ["White", "Sepia", "Dark Gray", "Black"],
+    fontSize: ["18", "24", "30", "36"],
+    font: ["San Francisco"]
+}
+
+const COLORS: any = {
+    white: 0xFFFFFF,
+    light_gray: 0xDDDDDD,
+    brown: 0x4C3320,
+    sepia: 0xF2E5C9,
+    dark_gray: 0x444444,
+    black: 0x000000
+}
 
 export class FreeWebNovel extends Source {
     requestManager: RequestManager = createRequestManager({
@@ -36,14 +48,25 @@ export class FreeWebNovel extends Source {
         requestTimeout: 5000,
         interceptor: {
             interceptRequest: async (request) => {return request},
-            interceptResponse: async (response) => {return interceptResponse(response, this.cheerio)}
+            interceptResponse: async (response) => {return interceptResponse(response, this.cheerio, {
+                textColor: COLORS[(await getTextColor(this.stateManager)).toLowerCase()],
+                backgroundColor: COLORS[(await getBackgroundColor(this.stateManager)).toLowerCase()],
+                font: `${(await getFont(this.stateManager)).toLowerCase().replace(" ", "")}${await getFontSize(this.stateManager)}`,
+                padding: {
+                    horizontal: await getHorizontalPadding(this.stateManager),
+                    vertical: await getVerticalPadding(this.stateManager)
+                }
+            })}
         }
     })
+    stateManager: SourceStateManager = createSourceStateManager({})
+    override async getSourceMenu(): Promise<Section> {
+        return styleSettings(this.stateManager)
+    }
     async getMangaDetails(mangaId: string): Promise<Manga> { 
         const request = createRequestObject({
             url: `${WEBSITE_URL}/${mangaId}.html`,
             method: 'GET',
-            //cookies: COOKIES
         })
         const response = await this.requestManager.schedule(request, REQUEST_RETRIES)
         const $ = this.cheerio.load(response.data)
@@ -77,7 +100,6 @@ export class FreeWebNovel extends Source {
         const request = createRequestObject({
             url: `${WEBSITE_URL}/${mangaId}.html`,
             method: 'GET',
-            //cookies: COOKIES
         })
         const response = await this.requestManager.schedule(request, REQUEST_RETRIES)
         let $ = this.cheerio.load(response.data)
@@ -109,7 +131,6 @@ export class FreeWebNovel extends Source {
         const request = createRequestObject({
             url: `${WEBSITE_URL}/${chapterId}.html`,
             method: 'GET',
-            //cookies: COOKIES
         })
         const response = await this.requestManager.schedule(request, REQUEST_RETRIES)
         const $ = this.cheerio.load(response.data)
@@ -117,10 +138,10 @@ export class FreeWebNovel extends Source {
         const textSegments: string[] = []
         const chapterText = $('div.txt > p').toArray()
         for(let chapterTextSeg of chapterText) {
-            textSegments.push($(chapterTextSeg).text())
+            textSegments.push(decodeHTMLEntity($(chapterTextSeg).text()))
         }
-        const text = textSegments.join('\n\n')
-        const lines = Math.floor(spliterate(text, MAX_PAGE_WIDTH).split.length/LINES_PER_PAGE)
+        const text = textSegments.join('\n')
+        const lines = Math.ceil(spliterate(text.replace(/[^\x00-\x7F]/g, ""), MAX_PAGE_WIDTH-(await getHorizontalPadding(this.stateManager))*2, `${(await getFont(this.stateManager)).toLowerCase().replace(" ", "")}${await getFontSize(this.stateManager)}`).split.length/LINES_PER_PAGE)
         for(let i = 1; i <= lines; i++) {
             pages.push(`${WEBSITE_URL}/${chapterId}.html?ttiparse&ttipage=${i}`)
         }
@@ -136,7 +157,6 @@ export class FreeWebNovel extends Source {
         const request = createRequestObject({
             url: `${WEBSITE_URL}/search/?searchkey=${query.title}`,
             method: 'POST',
-            //cookies: COOKIES
         })
         const response = await this.requestManager.schedule(request, REQUEST_RETRIES)
         const $ = this.cheerio.load(response.data)
@@ -151,6 +171,29 @@ export class FreeWebNovel extends Source {
             }))
         }
         return createPagedResults({ results: results })
+    }
+    override async getHomePageSections(sectionCallback: (section: HomeSection) => void): Promise<void> {
+        let section = createHomeSection({
+            id: 'recently_updated',
+            title: 'Recently Updated Novels',
+            view_more: true,
+        })
+        const request = createRequestObject({
+            url: `${WEBSITE_URL}/latest-release-novel/`,
+            method: 'GET'
+        })
+        const response = await this.requestManager.schedule(request, REQUEST_RETRIES)
+        const $ = this.cheerio.load(response.data)
+        sectionCallback(section)
+        section.items = [
+            
+            createMangaTile({
+                id: 'the-demonic-king-chases-his-wife-the-rebellious-good-for-nothing-miss',
+                title: createIconText({text: 'test'}),
+                image: ''
+            })
+        ]
+        sectionCallback(section)
     }
     override getCloudflareBypassRequest(): Request {
         return createRequestObject({
@@ -169,5 +212,118 @@ export const FreeWebNovelInfo: SourceInfo = {
     description: 'Source for FreeWebNovel. Created by JimIsWayTooEpic.',
     contentRating: ContentRating.ADULT,
     websiteBaseURL: WEBSITE_URL,
-    language: "English"
+    language: "English",
+    sourceTags: [
+        {
+            text: "Light Novel",
+            type: TagType.BLUE
+        },
+        {
+            text: "Experimental",
+            type: TagType.YELLOW
+        }
+    ]
+}
+
+async function getTextColor(stateManager: SourceStateManager): Promise<string> {
+    return (await stateManager.retrieve('text_color') as string) ?? 'Black'
+}
+async function getBackgroundColor(stateManager: SourceStateManager): Promise<string> {
+    return (await stateManager.retrieve('background_color') as string) ?? 'White'
+}
+async function getFontSize(stateManager: SourceStateManager): Promise<number> {
+    return (await stateManager.retrieve('font_size') as number) ?? 18
+}
+async function getFont(stateManager: SourceStateManager): Promise<string> {
+    return (await stateManager.retrieve('font') as string) ?? 'San Francisco'
+}
+async function getHorizontalPadding(stateManager: SourceStateManager): Promise<number> {
+    return parseInt(await stateManager.retrieve('horizontal_padding') as string) ?? 20
+}
+async function getVerticalPadding(stateManager: SourceStateManager): Promise<number> {
+    return parseInt(await stateManager.retrieve('vertical_padding') as string) ?? 20
+}
+
+async function styleSettings(stateManager: SourceStateManager): Promise<Section> {
+    return Promise.resolve(createSection({
+        id: 'main',
+        header: 'Source Settings',
+        rows: async () => [
+            createNavigationButton({
+                label: 'Reader Style',
+                value: '',
+                id: 'style',
+                form: createForm({
+                    sections: async (): Promise<Section[]> => {
+                        return [
+                            createSection({
+                                id: '',
+                                rows: async (): Promise<FormRow[]> => {
+                                    return [
+                                        createSelect({
+                                            label: 'Text Color',
+                                            options: SETTINGS.textColor,
+                                            displayLabel: option => {return option},
+                                            value: [await getTextColor(stateManager)],
+                                            id: 'text_color',
+                                            allowsMultiselect: false
+                                        }),
+                                        createSelect({
+                                            label: 'Background Color',
+                                            options: SETTINGS.backgroundColor,
+                                            displayLabel: option => {return option},
+                                            value: [await getBackgroundColor(stateManager)],
+                                            id: 'background_color',
+                                            allowsMultiselect: false
+                                        }),
+                                        createSelect({
+                                            label: 'Font',
+                                            options: SETTINGS.font,
+                                            displayLabel: option => {return option},
+                                            value: [await getFont(stateManager)],
+                                            id: 'font',
+                                            allowsMultiselect: false
+                                        }),
+                                        createSelect({
+                                            label: 'Font Size',
+                                            options: SETTINGS.fontSize,
+                                            displayLabel: option => {return option},
+                                            value: [(await getFontSize(stateManager)).toString()],
+                                            id: 'font_size',
+                                            allowsMultiselect: false
+                                        }),
+                                        createInputField({
+                                            placeholder: 'Horizontal Padding',
+                                            maskInput: false,
+                                            value: (await getHorizontalPadding(stateManager)).toString(),
+                                            id: 'horizontal_padding'
+                                        }),
+                                        createInputField({
+                                            placeholder: 'Vertical Padding',
+                                            maskInput: false,
+                                            value: (await getVerticalPadding(stateManager)).toString(),
+                                            id: 'vertical_padding'
+                                        })
+                                    ]
+                                }
+                            })
+                        ]
+                    },
+                    onSubmit: async (values: any): Promise<void> => {
+                        return Promise.all([
+                            stateManager.store('text_color', values.text_color[0]),
+                            stateManager.store('background_color', values.background_color[0]),
+                            stateManager.store('font_size', values.font_size[0]),
+                            stateManager.store('font', values.font[0]),
+                            stateManager.store('horizontal_padding', values.horizontal_padding),
+                            stateManager.store('vertical_padding', values.vertical_padding)
+                        ]).then()
+                    },
+                    validate: async (values: any): Promise<boolean> => {
+                        return !isNaN(parseInt(values.horizontal_padding)) && !isNaN(parseInt(values.vertical_padding))
+                    }
+                })
+            })
+        ]
+    }))
 }
