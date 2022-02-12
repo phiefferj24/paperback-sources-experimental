@@ -9,6 +9,7 @@ import {
     MangaTile,
     PagedResults,
     Request,
+    Response,
     SearchRequest,
     Source,
     SourceInfo,
@@ -44,13 +45,13 @@ const COLORS: any = {
 
 export class FreeWebNovel extends Source {
     requestManager: RequestManager = createRequestManager({
-        requestsPerSecond: 1,
+        requestsPerSecond: 10,
         requestTimeout: 5000,
         interceptor: {
             interceptRequest: async (request) => {return request},
             interceptResponse: async (response) => {return interceptResponse(response, this.cheerio, {
-                textColor: COLORS[(await getTextColor(this.stateManager)).toLowerCase()],
-                backgroundColor: COLORS[(await getBackgroundColor(this.stateManager)).toLowerCase()],
+                textColor: COLORS[(await getTextColor(this.stateManager)).toLowerCase().replace(" ", "_")],
+                backgroundColor: COLORS[(await getBackgroundColor(this.stateManager)).toLowerCase().replace(" ", "_")],
                 font: `${(await getFont(this.stateManager)).toLowerCase().replace(" ", "")}${await getFontSize(this.stateManager)}`,
                 padding: {
                     horizontal: await getHorizontalPadding(this.stateManager),
@@ -105,13 +106,16 @@ export class FreeWebNovel extends Source {
         let $ = this.cheerio.load(response.data)
         const chapterPages = $('div.page > select > option').toArray()
         const chapters: Chapter[] = []
+        const responses: Promise<Response>[] = []
         while(chapterPages.length > 0) {
             const option = chapterPages.shift()
             const newRequest = createRequestObject({
                 url: `${WEBSITE_URL}${$(option).attr('value')}`,
                 method: 'GET',
             })
-            const newResponse = await this.requestManager.schedule(newRequest, REQUEST_RETRIES)
+            responses.push(this.requestManager.schedule(request, REQUEST_RETRIES))
+        }
+        (await Promise.all(responses)).forEach((newResponse) => {
             $ = this.cheerio.load(newResponse.data)
             const embeddedChapters = $('div.m-newest2 > ul.ul-list5 > li').toArray()
             for(let embeddedChapter of embeddedChapters) {
@@ -124,7 +128,7 @@ export class FreeWebNovel extends Source {
                     name: $(embeddedChapter).text()
                 }))
             }
-        }
+        })
         return chapters
     }
     async getChapterDetails(mangaId: string, chapterId: string): Promise<ChapterDetails> {
@@ -238,10 +242,10 @@ async function getFont(stateManager: SourceStateManager): Promise<string> {
     return (await stateManager.retrieve('font') as string) ?? 'San Francisco'
 }
 async function getHorizontalPadding(stateManager: SourceStateManager): Promise<number> {
-    return parseInt(await stateManager.retrieve('horizontal_padding') as string) ?? 20
+    return await stateManager.retrieve('horizontal_padding') as number ?? 20
 }
 async function getVerticalPadding(stateManager: SourceStateManager): Promise<number> {
-    return parseInt(await stateManager.retrieve('vertical_padding') as string) ?? 20
+    return await stateManager.retrieve('vertical_padding') as number ?? 20
 }
 
 async function styleSettings(stateManager: SourceStateManager): Promise<Section> {
@@ -292,17 +296,21 @@ async function styleSettings(stateManager: SourceStateManager): Promise<Section>
                                             id: 'font_size',
                                             allowsMultiselect: false
                                         }),
-                                        createInputField({
-                                            placeholder: 'Horizontal Padding',
-                                            maskInput: false,
-                                            value: (await getHorizontalPadding(stateManager)).toString(),
-                                            id: 'horizontal_padding'
+                                        createStepper({
+                                            label: 'Horizontal Padding',
+                                            value: await getHorizontalPadding(stateManager),
+                                            id: 'horizontal_padding',
+                                            min: 0,
+                                            max: 100,
+                                            step: 5
                                         }),
-                                        createInputField({
-                                            placeholder: 'Vertical Padding',
-                                            maskInput: false,
-                                            value: (await getVerticalPadding(stateManager)).toString(),
-                                            id: 'vertical_padding'
+                                        createStepper({
+                                            label: 'Vertical Padding',
+                                            value: await getVerticalPadding(stateManager),
+                                            id: 'vertical_padding',
+                                            min: 0,
+                                            max: 100,
+                                            step: 5
                                         })
                                     ]
                                 }
@@ -320,7 +328,7 @@ async function styleSettings(stateManager: SourceStateManager): Promise<Section>
                         ]).then()
                     },
                     validate: async (values: any): Promise<boolean> => {
-                        return !isNaN(parseInt(values.horizontal_padding)) && !isNaN(parseInt(values.vertical_padding))
+                        return true
                     }
                 })
             })

@@ -115,31 +115,32 @@ function splitColor(color: number): number[] {
  * @param options an object containing the style options for the image
  * @returns a 3d array containing color data for each pixel, used to pass into writeImageData
  */
-function writeText(text: string, maxWidth: number, padding: {vertical: number, horizontal: number}, lines: number, page: number, constantWidth: boolean, options: {textColor: number, backgroundColor: number, font: string}): number[][][] {
+function writeText(text: string, maxWidth: number, constantWidth: boolean, lines: number, page: number, options: ImageOptions): number[][][] {
+    if(typeof options.padding === "number") options.padding = {horizontal: options.padding, vertical: options.padding}
     text = text.replace(/[^\x00-\x7F]/g, "")
-    let {split, width} = spliterate(text, maxWidth-padding.horizontal*2, options.font)
+    let {split, width} = spliterate(text, maxWidth-options.padding.horizontal*2, options.font)
     split = split.slice((page-1)*lines, page*lines > split.length ? undefined : page*lines)
-    width += padding.horizontal*2
+    width += options.padding.horizontal*2
     if(constantWidth) width = maxWidth
-    const height = split.length*fonts[options.font].height + padding.vertical*2
+    const height = split.length*fonts[options.font].height + options.padding.vertical*2
     let img: number[][][] = []
     let lineAt = -1
     for(let i = 0; i < height; i++) {
         img[i] = []
-        if(i < padding.vertical || i >= height-padding.vertical) {
+        if(i < options.padding.vertical || i >= height-options.padding.vertical) {
             for(let j = 0; j < width; j++) {
                 img[i]![j] = splitColor(options.backgroundColor)
             }
             continue
         }
-        if((i-padding.vertical)%fonts[options.font].height==0) {
+        if((i-options.padding.vertical)%fonts[options.font].height==0) {
             lineAt++
         }
         let letterOn = -1
         let letter: number[] = []
-        let letterBase = padding.horizontal
+        let letterBase = options.padding.horizontal
         for(let j = 0; j < width; j++) {
-            if(j < padding.horizontal || j >= width-padding.horizontal) {
+            if(j < options.padding.horizontal || j >= width-options.padding.horizontal) {
                 img[i]![j] = splitColor(options.backgroundColor)
                 continue
             }
@@ -150,12 +151,12 @@ function writeText(text: string, maxWidth: number, padding: {vertical: number, h
                 if(Number.isNaN(char) || char < 0 || char >= 95 || char === undefined) char = 0
                 letter = fonts[options.font].font[char]!
             }
-            const alpha: number = 255 - letter[((i-padding.vertical)-lineAt*fonts[options.font].height)*(letter.length/fonts[options.font].height)+j-letterBase]!
+            const alpha: number = letter[((i-options.padding.vertical)-lineAt*fonts[options.font].height)*(letter.length/fonts[options.font].height)+j-letterBase]!
             if(alpha === 0) img[i]![j] = splitColor(options.backgroundColor)
             else {
-                const blue = splitColor(options.textColor)[0]! * (alpha / 255.0) + splitColor(options.backgroundColor)[0]! * (1 - alpha / 255.0)
-                const green = splitColor(options.textColor)[1]! * (alpha / 255.0) + splitColor(options.backgroundColor)[1]! * (1 - alpha / 255.0)
-                const red = splitColor(options.textColor)[2]! * (alpha / 255.0) + splitColor(options.backgroundColor)[2]! * (1 - alpha / 255.0)
+                const blue = Math.min(splitColor(options.textColor)[0]! * (alpha / 255.0) + splitColor(options.backgroundColor)[0]! * (1 - alpha / 255.0), 255)
+                const green = Math.min(splitColor(options.textColor)[1]! * (alpha / 255.0) + splitColor(options.backgroundColor)[1]! * (1 - alpha / 255.0), 255)
+                const red = Math.min(splitColor(options.textColor)[2]! * (alpha / 255.0) + splitColor(options.backgroundColor)[2]! * (1 - alpha / 255.0), 255)
                 img[i]![j] = [blue, green, red]
             }
         }
@@ -196,7 +197,7 @@ export function decodeHTMLEntity(str: string): string {
      .replace(/&hearts;/g, '')
 }
 
-export function interceptResponse(response: Response, cheerio: any, settings: {textColor: number, backgroundColor: number, font: string, padding: {horizontal: number, vertical: number}}): Response {
+export function interceptResponse(response: Response, cheerio: any, settings: ImageOptions): Response {
     if((response.request.url.includes('ttiparse') || response.request.param?.includes('ttiparse')) && (response.request.url.includes('ttipage') || response.request.param?.includes('ttipage'))) {
         let pageNum = 1
         if(response.request.url.includes('ttipage')) {
@@ -216,8 +217,15 @@ export function interceptResponse(response: Response, cheerio: any, settings: {t
             tarr.push(decodeHTMLEntity($(i).text()))
         }
         let pageText = tarr.join("\n")
-        response.rawData = createRawData(writeImageData(writeText(pageText, 800, {vertical: settings.padding.vertical, horizontal: settings.padding.horizontal}, 60, pageNum, true, {textColor: settings.textColor, backgroundColor: settings.backgroundColor, font: settings.font})))
+        response.rawData = createRawData(writeImageData(writeText(pageText, 800, true, 60, pageNum, settings)))
         response.headers['content-type'] = 'image/bmp'
     }
     return response
+}
+
+export interface ImageOptions {
+    textColor: number,
+    backgroundColor: number,
+    font: string,
+    padding: number | {horizontal: number, vertical: number}
 }
